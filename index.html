@@ -82,6 +82,16 @@
   .btn-cancel{padding:11px 22px;background:var(--g200);color:var(--navy);border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif}
   .btn-confirm{padding:11px 22px;background:var(--red);color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif}
   @media(max-width:600px){header{padding:10px 14px}.logo-img{height:32px}#timer-display{font-size:15px;padding:5px 10px}.card{padding:24px 18px}.question-card{padding:18px}#screen-exam{padding:18px 12px 60px}}
+  /* INTEGRITY: inhibit copying / printing of the exam */
+  #screen-exam,#screen-exam .question-card,#screen-exam .q-text,#screen-exam .option,.modal{
+    -webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;user-select:none}
+  #screen-exam img{pointer-events:none}
+  @media print{
+    body *{visibility:hidden !important}
+    body::before{content:"Printing this examination is not permitted.";visibility:visible;position:fixed;top:40%;left:0;right:0;text-align:center;font-size:22px;font-weight:700;color:#082D57;font-family:'Inter',sans-serif}
+  }
+  /* LOCKED SCREEN (attempt already used) */
+  #screen-locked{max-width:520px;margin:60px auto;padding:0 20px;text-align:center}
   /* --- CERTIFICATE (used only to render the PDF, kept off-screen) --- */
   #certificate-render-area{position:fixed;top:-20000px;left:-20000px}
   .certificate{width:1056px;height:816px;box-sizing:border-box;padding:40px 62px;border:4px solid #C8A92A;background:#ffffff;font-family:Arial,Helvetica,sans-serif;color:#333333;display:flex;flex-direction:column;justify-content:center}
@@ -119,7 +129,7 @@
   // Adjust ALLOWED_HOST if your Thinkific school subdomain is different
   var ALLOWED_HOST = 'josetaxesacademy.com';
 
-  function blockAccess(reason){
+  function blockAccess(){
     document.documentElement.innerHTML =
       '<div style="display:flex;align-items:center;justify-content:center;' +
       'min-height:100vh;font-family:Inter,sans-serif;background:#F5F7FA;' +
@@ -139,19 +149,6 @@
     blockAccess();
     return; // stop here — don't wire up the rest of the exam
   }
-
-  // 3) Disable right-click
-  document.addEventListener('contextmenu', function(e){ e.preventDefault(); });
-
-  // 4) Block common DevTools shortcuts
-  document.addEventListener('keydown', function(e){
-    var k = e.key ? e.key.toUpperCase() : '';
-    if (k === 'F12' ||
-       (e.ctrlKey && e.shiftKey && (k === 'I' || k === 'J' || k === 'C')) ||
-       (e.ctrlKey && k === 'U')) {
-      e.preventDefault();
-    }
-  });
 })();
 </script>
 
@@ -175,7 +172,11 @@
     </div>
     <button class="btn-primary" onclick="startExam()">Start Exam →</button>
     <div class="info-box">
-      <strong>Exam rules:</strong> 3-hour time limit &nbsp;·&nbsp; 70% minimum to pass &nbsp;·&nbsp; 100 questions, randomly ordered &nbsp;·&nbsp; Once submitted, answers cannot be changed.
+      <strong>Please read carefully before you begin:</strong><br>
+      • You have <strong>ONE attempt only</strong>. Once the exam starts it cannot be restarted or retaken.<br>
+      • The <strong>3-hour timer starts immediately</strong> when you click Start and <strong>counts down continuously</strong>. It does <strong>not pause or stop</strong> if you leave the page, switch tabs, close the browser, or remain idle.<br>
+      • <strong>100 questions</strong> presented in random order &nbsp;·&nbsp; <strong>70%</strong> required to pass.<br>
+      • Once submitted, your answers cannot be changed. Copying or printing the exam is not permitted.
     </div>
   </div>
 </div>
@@ -246,12 +247,17 @@
       <div class="details">
         <div>Date of Completion: <span class="value" id="cert-date"></span></div>
         <div>Valid through: <span class="value" id="cert-validthrough"></span></div>
-        <div>PTIN: <span class="value" id="cert-ptin"></span></div>
       </div>
     </div>
     <hr class="rule" style="margin-top:28px;">
     <div class="footer">JOSETAXES.COM &middot; Kissimmee, FL | JoseTaxes Academy</div>
     <div class="cert-id" id="cert-id"></div>
+  </div>
+</div>
+<div id="screen-locked" class="screen">
+  <div class="card">
+    <div class="card-title">Exam Already Completed</div>
+    <div class="card-sub" id="locked-msg" style="margin-bottom:0">Our records show this PTIN has already completed the AFTR Final Examination. Only <strong>one attempt</strong> is permitted, so the exam cannot be taken again.</div>
   </div>
 </div>
 
@@ -386,12 +392,50 @@ const QUESTION_BANK = [
 // ══════════════════════════════════════════════════════
 //  STATE
 // ══════════════════════════════════════════════════════
-let studentName="",studentPTIN="",shuffledQ=[],answers={},timerInt=null,secondsLeft=EXAM_DURATION_SECONDS,examSubmitted=false;
+let studentName="",studentPTIN="",shuffledQ=[],answers={},timerInt=null,secondsLeft=EXAM_DURATION_SECONDS,examSubmitted=false,examEndTime=0;
+const SESSION_PREFIX="AFTR_SESSION_",CURRENT_KEY="AFTR_CURRENT";
 
 function shuffle(arr){const a=[...arr];for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a}
 function formatTime(s){const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sc=s%60;return`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sc).padStart(2,'0')}`}
 function formatUsed(s){const u=EXAM_DURATION_SECONDS-s,h=Math.floor(u/3600),m=Math.floor((u%3600)/60),sc=u%60;return h>0?`${h}h ${m}m ${sc}s`:m>0?`${m}m ${sc}s`:`${sc}s`}
 function showScreen(id){document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));document.getElementById(id).classList.add('active')}
+
+// ── Single-attempt persistence: keeps the timer running across reloads / navigation ──
+function sessionKey(ptin){return SESSION_PREFIX+ptin}
+function saveSession(){
+  if(!studentPTIN)return;
+  try{localStorage.setItem(sessionKey(studentPTIN),JSON.stringify({
+    name:studentName,ptin:studentPTIN,endTime:examEndTime,
+    questions:shuffledQ,answers:answers,submitted:examSubmitted
+  }));}catch(e){}
+}
+function loadSession(ptin){
+  try{const raw=localStorage.getItem(sessionKey(ptin));return raw?JSON.parse(raw):null;}catch(e){return null;}
+}
+function showLocked(){
+  showScreen('screen-locked');window.scrollTo(0,0);
+  const td=document.getElementById('timer-display');td.style.display='none';td.className='';
+}
+function resumeSession(s){
+  studentName=s.name;studentPTIN=s.ptin;shuffledQ=s.questions||[];answers=s.answers||{};
+  examEndTime=s.endTime;examSubmitted=false;
+  document.getElementById('display-name').textContent=studentName;
+  document.getElementById('display-ptin').textContent=studentPTIN;
+  renderQuestions();
+  Object.keys(answers).forEach(qi=>{
+    const oi=answers[qi];
+    const el=document.querySelector(`input[name="q${qi}"][value="${oi}"]`);if(el)el.checked=true;
+    const opt=document.getElementById(`opt-${qi}-${oi}`);if(opt)opt.classList.add('selected');
+    const card=document.getElementById(`qcard-${qi}`);if(card)card.classList.add('answered');
+  });
+  updateProgress();
+  showScreen('screen-exam');startTimer();window.scrollTo(0,0);
+}
+// On load, if an unfinished attempt exists, resume it so the clock keeps counting down.
+window.addEventListener('DOMContentLoaded',()=>{
+  const cur=localStorage.getItem(CURRENT_KEY);
+  if(cur){const s=loadSession(cur);if(s&&!s.submitted){resumeSession(s);}}
+});
 
 function startExam(){
   const nEl=document.getElementById('input-name'),pEl=document.getElementById('input-ptin');
@@ -401,6 +445,14 @@ function startExam(){
   if(!studentName){nEl.classList.add('error');ok=false}
   if(!studentPTIN){pEl.classList.add('error');ok=false}
   if(!ok)return;
+  // Single-attempt enforcement
+  const existing=loadSession(studentPTIN);
+  if(existing){
+    if(existing.submitted){showLocked();return;}
+    // An unfinished attempt exists for this PTIN — resume it, do NOT restart the clock.
+    localStorage.setItem(CURRENT_KEY,studentPTIN);
+    resumeSession(existing);return;
+  }
   document.getElementById('display-name').textContent=studentName;
   document.getElementById('display-ptin').textContent=studentPTIN;
   shuffledQ=shuffle(QUESTION_BANK).map(q=>{
@@ -408,6 +460,9 @@ function startExam(){
     const sh=shuffle(indexed);
     return{q:q.q,shuffledOptions:sh.map(x=>x.opt),correctIdx:sh.findIndex(x=>x.isCorrect)};
   });
+  answers={};examSubmitted=false;
+  examEndTime=Date.now()+EXAM_DURATION_SECONDS*1000;   // fixed wall-clock deadline
+  localStorage.setItem(CURRENT_KEY,studentPTIN);saveSession();
   renderQuestions();showScreen('screen-exam');startTimer();window.scrollTo(0,0);
 }
 
@@ -426,6 +481,7 @@ function selectAnswer(qi,oi){
   answers[qi]=oi;
   for(let i=0;i<shuffledQ[qi].shuffledOptions.length;i++){document.getElementById(`opt-${qi}-${i}`).classList.toggle('selected',i===oi)}
   document.getElementById(`qcard-${qi}`).classList.add('answered');
+  saveSession();
   updateProgress();
 }
 
@@ -438,20 +494,33 @@ function updateProgress(){
 }
 
 function startTimer(){
-  const d=document.getElementById('timer-display');d.style.display='block';
-  timerInt=setInterval(()=>{
-    secondsLeft--;d.textContent=formatTime(secondsLeft);
-    if(secondsLeft<=600&&secondsLeft>300)d.className='warning';
-    else if(secondsLeft<=300)d.className='danger';
-    if(secondsLeft<=0){clearInterval(timerInt);autoSubmit()}
-  },1000);
+  document.getElementById('timer-display').style.display='block';
+  tickTimer();                       // paint immediately
+  clearInterval(timerInt);
+  timerInt=setInterval(tickTimer,1000);
 }
+// Remaining time is always derived from the fixed deadline and the real clock,
+// so it keeps counting down even if the tab is idle, hidden, or was reloaded.
+function tickTimer(){
+  const d=document.getElementById('timer-display');
+  if(!examEndTime)return;
+  secondsLeft=Math.max(0,Math.round((examEndTime-Date.now())/1000));
+  d.textContent=formatTime(secondsLeft);
+  if(secondsLeft<=300)d.className='danger';
+  else if(secondsLeft<=600)d.className='warning';
+  else d.className='';
+  if(secondsLeft<=0){clearInterval(timerInt);timerInt=null;autoSubmit()}
+}
+// Re-sync the moment the tab regains focus (background timers get throttled).
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&timerInt)tickTimer()});
 
 function autoSubmit(){
-  if(examSubmitted)return;closeModal();
+  // Time is up: finalize and record the attempt immediately, then show results.
+  if(examSubmitted)return;
+  submitExam();
   document.getElementById('modal-title').textContent="⏰ Time's Up!";
-  document.getElementById('modal-body').textContent="Your exam has been automatically submitted with the answers provided.";
-  document.querySelector('.modal-btns').innerHTML=`<button class="btn-confirm" onclick="submitExam()">View My Results</button>`;
+  document.getElementById('modal-body').textContent="The 3-hour time limit was reached. Your exam was automatically submitted with the answers provided.";
+  document.querySelector('.modal-btns').innerHTML=`<button class="btn-confirm" onclick="closeModal()">View My Results</button>`;
   document.getElementById('modal').classList.add('open');
 }
 
@@ -466,11 +535,13 @@ function confirmSubmit(){
 function closeModal(){document.getElementById('modal').classList.remove('open')}
 
 function submitExam(){
-  if(examSubmitted)return;examSubmitted=true;clearInterval(timerInt);closeModal();
+  if(examSubmitted)return;examSubmitted=true;clearInterval(timerInt);timerInt=null;closeModal();
   let correct=0;shuffledQ.forEach((q,qi)=>{if(answers[qi]===q.correctIdx)correct++});
   const total=shuffledQ.length,pct=Math.round((correct/total)*100),passed=pct>=PASS_THRESHOLD,
         timeUsed=formatUsed(secondsLeft),now=new Date(),
         dateStr=now.toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+  saveSession();                       // records submitted:true → no second attempt
+  localStorage.removeItem(CURRENT_KEY);
   showResults(pct,passed,correct,total,timeUsed,dateStr);
   sendToSheets(studentName,studentPTIN,pct,passed?'PASSED':'FAILED',correct,total,timeUsed,dateStr);
 }
@@ -539,7 +610,6 @@ async function generateCertificate(){
   const dd=String(now.getDate()).padStart(2,'0'),mm=String(now.getMonth()+1).padStart(2,'0'),yyyy=now.getFullYear();
   document.getElementById('cert-date').textContent=`${mm}/${dd}/${yyyy}`;
   document.getElementById('cert-validthrough').textContent=info.valid_through;
-  document.getElementById('cert-ptin').textContent=studentPTIN||"Not Applicable";
   document.getElementById('cert-id').textContent="Certificate ID: "+certId;
 
   const logoImg=document.getElementById('cert-logo');
@@ -547,16 +617,17 @@ async function generateCertificate(){
   if(!logoImg.complete){await new Promise(resolve=>{logoImg.onload=resolve});}
 
   const node=document.getElementById('certificate-node');
-  const canvas=await html2canvas(node,{scale:2,useCORS:true});
-  const imgData=canvas.toDataURL('image/jpeg',0.95);
+  // scale:3 + PNG (lossless) for a sharper, higher-quality certificate image
+  const canvas=await html2canvas(node,{scale:3,useCORS:true});
+  const imgData=canvas.toDataURL('image/png');
 
   const {jsPDF}=window.jspdf;
   const pdf=new jsPDF({orientation:'landscape',unit:'pt',format:'letter'});
   const pageWidth=pdf.internal.pageSize.getWidth(),pageHeight=pdf.internal.pageSize.getHeight();
-  pdf.addImage(imgData,'JPEG',0,0,pageWidth,pageHeight);
+  pdf.addImage(imgData,'PNG',0,0,pageWidth,pageHeight,undefined,'FAST');
 
   const safeName=studentName.replace(/[^a-zA-Z0-9]+/g,'_');
-  pdf.save(`certificado_${safeName}_${info.slug}.pdf`);
+  pdf.save(`certificate_${safeName}_${info.slug}.pdf`);
 
   btn.disabled=false;btn.textContent='Download my Certificate (PDF)';
 }
@@ -565,6 +636,18 @@ function sendToSheets(name,ptin,score,status,correct,total,timeUsed,dateStr){
   const p=new URLSearchParams({name,ptin,score,status,correct,total,timeUsed,date:dateStr});
   fetch(`${GOOGLE_SCRIPT_URL}?${p}`,{method:'GET',mode:'no-cors'});
 }
+
+// ── INTEGRITY: block copy / cut / right-click while the exam is on screen, and block printing ──
+function examVisible(){return document.getElementById('screen-exam').classList.contains('active')}
+['copy','cut','contextmenu','selectstart','dragstart'].forEach(ev=>
+  document.addEventListener(ev,e=>{if(examVisible())e.preventDefault()}));
+document.addEventListener('keydown',e=>{
+  const k=(e.key||'').toLowerCase();
+  // Ctrl/Cmd+P (print) always blocked; C/X/S/U blocked during the exam
+  if((e.ctrlKey||e.metaKey)&&(k==='p'||(examVisible()&&['c','x','s','u'].includes(k)))){e.preventDefault()}
+  // Block DevTools shortcuts: F12, Ctrl+Shift+I/J/C
+  if(k==='f12'||((e.ctrlKey||e.metaKey)&&e.shiftKey&&['i','j','c'].includes(k))){e.preventDefault()}
+});
 </script>
 
 <!--
